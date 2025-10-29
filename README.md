@@ -56,7 +56,7 @@ data/Full.pdf
 
 ### 5. Запустите тест
 ```bash
-python test.py
+python test_rag.py
 ```
 Скрипт:
 - проиндексирует ваш PDF в изолированную векторную базу,
