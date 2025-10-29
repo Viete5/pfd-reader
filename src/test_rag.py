@@ -26,7 +26,7 @@ async def main():
         return
 
     # 2. Запрос
-    answer = await handle_user_query(USER_ID, "HOW MANY BACTERIAS EQUALS A MASS OF A HUMAN?")
+    answer = await handle_user_query(USER_ID, "What is this text about?")
     print("→ Ответ:", answer)
 
 if __name__ == "__main__":
