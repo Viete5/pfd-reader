@@ -7,7 +7,6 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from src.config import EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP, VECTOR_DB_ROOT_PATH
 
-
 def get_user_db_path(user_id: str | int) -> str:
     """Генерирует уникальный путь к базе данных для пользователя."""
     return os.path.join(VECTOR_DB_ROOT_PATH, f"user_{user_id}")
@@ -15,7 +14,6 @@ def get_user_db_path(user_id: str | int) -> str:
 @lru_cache(maxsize=1)
 def _get_embeddings():
     return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-
 
 def index_user_pdf(pdf_file_path: str, user_id: str | int):
     """
@@ -50,7 +48,7 @@ def index_user_pdf(pdf_file_path: str, user_id: str | int):
     # 4. Создание эмбеддингов и сохранение
     try:
         print("Создание эмбеддингов...")
-        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        embeddings = _get_embeddings()
 
         vectorstore = Chroma.from_documents(
             documents=texts,

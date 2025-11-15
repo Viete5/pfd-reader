@@ -6,7 +6,6 @@ from src.config import GIGACHAT_AUTH_KEY, GIGACHAT_CLIENT_SECRET, AUTH_URL
 _CACHED_TOKEN = None
 _CACHED_TOKEN_TS = 0
 
-
 def get_token():
     global _CACHED_TOKEN, _CACHED_TOKEN_TS
 
