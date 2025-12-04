@@ -8,6 +8,7 @@ from src.config import EMBEDDING_MODEL, LLM_TEMPERATURE, RETRIEVER_K
 from src.services.get_token import get_token
 from src.tools.pdf_indexer import get_user_db_path
 
+
 @lru_cache(maxsize=1)
 def _get_embeddings():
     return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
@@ -64,6 +65,22 @@ class RAGLoader:
             # Логируем, но не прерываем работу, если закрытие не удалось
             print(f"Ошибка при закрытии ChromaDB: {e}")
 
+    def get_retrieved_context(self, topic: str, k: int = 4) -> str:
+        """
+        Возвращает ЧИСТЫЙ извлеченный текст (чанки), ИГНОРИРУЯ ПАМЯТЬ и LLM.
+        Используется только для предоставления контекста другим агентам.
+        """
+        # 1. Используем чистый ретривер (из RAGLoader)
+        docs = self.qa_chain.retriever.get_relevant_documents(topic)  # self.qa_chain.retriever - это ваш retriever
+
+        # 2. Объединяем в одну строку
+        context = "\n---\n".join([doc.page_content for doc in docs])
+
+        # 3. Ограничиваем длину (для Concept Explainer)
+        if len(context) > 2000:
+            return context[:2000] + " [Контекст обрезан для передачи агенту]"
+
+        return context
     # def _create_qa_chain(self):
     #     """Создаёт стандартную RAG-цепочку 'stuff' (всё в один промпт)."""
     #     return RetrievalQA.from_chain_type(

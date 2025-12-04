@@ -65,26 +65,33 @@ async def handle_user_query(user_id: int, query: str) -> str:
         # Простые команды
         if query.lower() in ['/start', '/help', 'помощь', 'help']:
             return get_help_message()
-        
-        # Определяем тип запроса и направляем к соответствующему агенту
-        if any(word in query.lower() for word in ['объясни', 'что такое', 'поясни', 'расскажи про']):
-            return await _handle_concept_explanation(user_id, query)
-        
-        elif any(word in query.lower() for word in ['найди', 'источник', 'материал', 'литератур', 'книг', 'учебник']):
+
+
+
+        if any(word in query.lower() for word in ['найди', 'источник', 'материал', 'литератур', 'книг', 'учебник']):
             return await _handle_source_finding(user_id, query)
-        
+
         elif any(word in query.lower() for word in ['совет', 'как учить', 'метод', 'учебные', 'изучать', 'подход']):
             return await _handle_study_advice(user_id, query)
-        
+
         elif any(word in query.lower() for word in ['улучши', 'структур', 'оформи', 'конспект', 'заметк']):
             return await _handle_notes_improvement(user_id, query)
 
         elif any(word in query.lower() for word in ['план', 'расписание', 'график', 'изучен']):
             return await _handle_study_plan(user_id, query)
+
+        rag_response = await asyncio.to_thread(_rag_agent.run, user_id, query)
+        # 3. Проверка на успешность RAG (новый шаг!)
+        if rag_response != "NO_RAG_ANSWER":
+            # RAG смог ответить (случай A)
+            return rag_response
         
-        else:
-            # Общие вопросы - используем RAG
-            return await asyncio.to_thread(_rag_agent.run, user_id, query)
+        # Определяем тип запроса и направляем к соответствующему агенту
+        if any(word in query.lower() for word in ['объясни', 'что такое', 'поясни', 'расскажи про']):
+            return await _handle_concept_explanation(user_id, query)
+
+
+        return "Извините, я не нашел информации по этому запросу ни в ваших конспектах, ни среди дополнительных материалов."
         
     except FileNotFoundError:
         return "⚠️ Сначала загрузите конспект! Используйте команду /start для помощи."
@@ -312,22 +319,41 @@ async def _handle_study_plan(user_id: int, query: str) -> str:
         logger.error(f"❌ Ошибка создания плана: {e}")
         return "❌ Произошла ошибка при создании учебного плана."
 
-async def _get_context_from_notes(user_id: int, query: str) -> str:
-    """Получает релевантный контекст из конспектов пользователя"""
-    try:
-        # Используем RAG агента для получения релевантных фрагментов
-        context_query = f"Контекст для: {query}"
-        context_response = await asyncio.to_thread(_rag_agent.run, user_id, context_query)
-        
-        # Если ответ слишком длинный, обрезаем его
-        if len(context_response) > 1000:
-            return context_response[:1000] + "..."
-        return context_response
-        
-    except Exception as e:
-        logger.warning(f"Не удалось получить контекст: {e}")
-        return ""
 
+def get_retrieved_context(self, topic: str, k: int = 4) -> str:
+    """
+    Возвращает ЧИСТЫЙ извлеченный текст (чанки), ИГНОРИРУЯ ПАМЯТЬ и LLM.
+    Используется только для предоставления контекста другим агентам.
+    """
+    # 1. Используем чистый ретривер (из RAGLoader)
+    docs = self.qa_chain.retriever.get_relevant_documents(topic)  # self.qa_chain.retriever - это ваш retriever
+
+    # 2. Объединяем в одну строку
+    context = "\n---\n".join([doc.page_content for doc in docs])
+
+    # 3. Ограничиваем длину (для Concept Explainer)
+    if len(context) > 2000:
+        return context[:2000] + " [Контекст обрезан для передачи агенту]"
+
+    return context
+
+
+async def _get_context_from_notes(user_id: int, query: str) -> str:
+    """Получает релевантный контекст из конспектов пользователя, БЕЗ использования памяти RAG."""
+    try:
+        # 1. Получаем сессию RAG (для доступа к ретриверу)
+        rag_session = _rag_agent._get_or_create_session(user_id)
+
+        # 2. Используем ЧИСТЫЙ метод извлечения
+        context = await asyncio.to_thread(
+            rag_session.get_retrieved_context,
+            query
+        )
+        return context
+
+    except Exception as e:
+        logger.warning(f"Не удалось получить чистый контекст: {e}")
+        return ""
 def _extract_concept_from_query(query: str) -> str:
     """Извлекает понятие из запроса"""
     patterns = [

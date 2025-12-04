@@ -29,9 +29,22 @@ class RAGAgent:
         try:
             # 1. Получаем объект с памятью
             rag = self._get_or_create_session(user_id)
+            response = rag.ask(query)
+            failure_keywords = [
+                "не могу найти",
+                "не содержится",
+                "отсутствует информация",  # Частый вариант
+                "не указано",  # Если ответ отсутствует
+                "нет данных",  # Если ответ отсутствует
+                "не нашел"  # Фраза, которую вы видели на скриншоте
+            ]
 
+            # Проверяем, содержит ли ответ LLM хотя бы одну из фраз
+            if any(keyword in response.lower() for keyword in failure_keywords):
+                # Возвращаем специальный сигнал оркестратору
+                return "NO_RAG_ANSWER"
             # 2. Отправляем вопрос в сохраненную цепь
-            return rag.ask(query)
+            return response
 
         except FileNotFoundError:
             # Это произойдет, если _get_or_create_session не нашел базу
