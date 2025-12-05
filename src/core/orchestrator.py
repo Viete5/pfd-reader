@@ -66,32 +66,41 @@ async def handle_user_query(user_id: int, query: str) -> str:
         if query.lower() in ['/start', '/help', 'помощь', 'help']:
             return get_help_message()
 
+        query_type = _analyze_query_type(query)
 
+        if query_type in ["study_advice", "notes_improvement", "study_plan"]:
+            # Эти агенты не отвечают на основе конспекта, они генерируют советы/планы.
+            # RAG для них не нужен, поэтому перенаправляем сразу.
+            if query_type == "study_advice": #НЕ РАБОТАЕТ
+                return await _handle_study_advice(user_id, query)
+            elif query_type == "notes_improvement": #НЕ РАБОТАЕТ
+                return await _handle_notes_improvement(user_id, query)
+            elif query_type == "study_plan": #НЕ РАБОТАЕТ
+                return await _handle_study_plan(user_id, query)
 
-        if any(word in query.lower() for word in ['найди', 'источник', 'материал', 'литератур', 'книг', 'учебник']):
-            return await _handle_source_finding(user_id, query)
-
-        elif any(word in query.lower() for word in ['совет', 'как учить', 'метод', 'учебные', 'изучать', 'подход']):
-            return await _handle_study_advice(user_id, query)
-
-        elif any(word in query.lower() for word in ['улучши', 'структур', 'оформи', 'конспект', 'заметк']):
-            return await _handle_notes_improvement(user_id, query)
-
-        elif any(word in query.lower() for word in ['план', 'расписание', 'график', 'изучен']):
-            return await _handle_study_plan(user_id, query)
 
         rag_response = await asyncio.to_thread(_rag_agent.run, user_id, query)
-        # 3. Проверка на успешность RAG (новый шаг!)
+
+        print(rag_response)
         if rag_response != "NO_RAG_ANSWER":
             # RAG смог ответить (случай A)
             return rag_response
-        
-        # Определяем тип запроса и направляем к соответствующему агенту
-        if any(word in query.lower() for word in ['объясни', 'что такое', 'поясни', 'расскажи про']):
+
+
+        logger.info(f"🔍 Тип запроса определен как: {query_type}")
+        # 3. Направляем к соответствующему агенту в зависимости от типа
+        if query_type == "concept_explanation": #РАБОТАЕТ
             return await _handle_concept_explanation(user_id, query)
 
+        elif query_type == "source_finding": #РАБОТАЕТ
+            return await _handle_source_finding(user_id, query)
 
-        return "Извините, я не нашел информации по этому запросу ни в ваших конспектах, ни среди дополнительных материалов."
+
+        else:
+            # 4. Если тип не определен, пробуем ConceptExplainer как резервный вариант
+            return await _try_concept_explainer_fallback(user_id, query)
+
+
         
     except FileNotFoundError:
         return "⚠️ Сначала загрузите конспект! Используйте команду /start для помощи."
@@ -99,6 +108,204 @@ async def handle_user_query(user_id: int, query: str) -> str:
     except Exception as e:
         logger.error(f"❌ Ошибка обработки запроса: {e}")
         return "❌ Произошла ошибка. Попробуйте переформулировать вопрос."
+
+
+async def _try_rag_response(user_id: int, query: str) -> Dict[str, Any]:
+    """
+    Пытается найти ответ через RAG систему
+    Возвращает dict с флагом успеха и ответом
+    """
+    try:
+        response = await asyncio.to_thread(_rag_agent.run, user_id, query)
+
+        # Анализируем качество ответа RAG
+        is_good_response = _evaluate_rag_response(response, query)
+
+        return {
+            "success": is_good_response,
+            "response": response
+        }
+
+    except Exception as e:
+        logger.warning(f"RAG не смог обработать запрос: {e}")
+        return {
+            "success": False,
+            "response": ""
+        }
+
+
+def _evaluate_rag_response(response: str, original_query: str) -> bool:
+    """
+    Оценивает качество ответа RAG
+    """
+    print(response)
+    if not response or len(response.strip()) < 10:
+        return False
+
+    # Проверяем признаки неудачного ответа
+    negative_indicators = [
+        "не удалось найти",
+        "нет информации",
+        "не могу найти",
+        "не знаю",
+        "не найдено",
+        "у вас нет загруженного",
+        "сначала загрузите",
+        "не удалось получить ответ",
+        "Не нашёл",
+        "❌",
+        "⚠️"
+    ]
+
+    # Проверяем, содержит ли ответ полезную информацию
+    response_lower = response.lower()
+    has_negative_indicator = any(indicator in response_lower for indicator in negative_indicators)
+
+    # Проверяем релевантность ответа запросу
+    query_keywords = _extract_keywords(original_query)
+    response_keywords = _extract_keywords(response)
+
+    # Если есть совпадения ключевых слов и нет негативных индикаторов - ответ хороший
+    keyword_overlap = len(set(query_keywords) & set(response_keywords))
+    has_relevance = keyword_overlap > 0 or len(response) > 50
+
+    return has_relevance and not has_negative_indicator
+
+
+def _extract_keywords(text: str) -> List[str]:
+    """Извлекает ключевые слова из текста"""
+    stop_words = {'что', 'как', 'почему', 'где', 'когда', 'объясни', 'найди', 'дай', 'расскажи', 'пожалуйста', 'можно'}
+    words = re.findall(r'\b[а-яa-z]{3,}\b', text.lower())
+    return [word for word in words if word not in stop_words]
+
+
+def _analyze_query_type(query: str) -> str:
+    """
+    Анализирует тип запроса для выбора подходящего агента
+    """
+    query_lower = query.lower()
+
+    # Концепты и объяснения (высокий приоритет после RAG)
+    concept_patterns = [
+        r'объясни\s+(?:что\s+такое\s+)?',
+        r'что\s+такое\s+',
+        r'поясни\s+',
+        r'расскажи\s+про\s+',
+        r'определи\s+',
+        r'в чем смысл',
+        r'что значит'
+    ]
+
+    # Поиск источников
+    source_patterns = [
+        r'найди\s+(?:материал[ы]?|источник[и]?)',
+        r'материал[ы]?\s+по\s+',
+        r'источник[и]?\s+по\s+',
+        r'книг[и]?\s+по\s+',
+        r'учебник[и]?\s+по\s+',
+        r'литератур[ау]?\s+по\s+',
+        r'где найти',
+        r'посоветуй книг'
+    ]
+
+    # Учебные советы
+    advice_patterns = [
+        r'как\s+(?:лучше|эффективно)\s+(?:учит|изуча|запомина)',
+        r'совет[ы]?\s+по\s+(?:учёбе|изучен)',
+        r'метод[ы]?\s+обучен',
+        r'как\s+запоминать',
+        r'техник[и]?\s+запоминан',
+        r'учебн[ые]?\s+совет[ы]?',
+        r'как\s+готовиться'
+    ]
+
+    # Улучшение конспектов
+    notes_patterns = [
+        r'улучши\s+',
+        r'как\s+вести\s+конспект',
+        r'совет[ы]?\s+по\s+конспект',
+        r'структур[ау]?\s+заметок',
+        r'оформи\s+конспект',
+        r'метод[ы]?\s+конспектирован'
+    ]
+
+    # Учебные планы
+    plan_patterns = [
+        r'план\s+(?:изучен|обучен)',
+        r'расписание\s+занятий',
+        r'график\s+изучен',
+        r'распредели\s+по\s+дням',
+        r'составь\s+план',
+        r'как\s+спланировать'
+    ]
+
+    # Проверяем паттерны в порядке приоритета
+    if any(re.search(pattern, query_lower) for pattern in concept_patterns):
+        return "concept_explanation"
+    elif any(re.search(pattern, query_lower) for pattern in source_patterns):
+        return "source_finding"
+    elif any(re.search(pattern, query_lower) for pattern in advice_patterns):
+        return "study_advice"
+    elif any(re.search(pattern, query_lower) for pattern in notes_patterns):
+        return "notes_improvement"
+    elif any(re.search(pattern, query_lower) for pattern in plan_patterns):
+        return "study_plan"
+    else:
+        return "general"
+
+
+async def _try_concept_explainer_fallback(user_id: int, query: str) -> str:
+    """
+    Резервный вариант - пытаемся объяснить запрос как концепт
+    """
+    try:
+        # Извлекаем возможный концепт из запроса
+        concept = _extract_possible_concept(query)
+
+        if concept:
+            logger.info(f"🔄 Использую ConceptExplainer для концепта: {concept}")
+            explanation_result = await asyncio.to_thread(
+                _concept_explainer.explain_concept,
+                concept,
+                f"Запрос пользователя: {query}"
+            )
+
+            if explanation_result and "explanation" in explanation_result:
+                response = f"🧠 **Объяснение: {concept}**\n\n"
+                response += explanation_result["explanation"]
+
+                if "key_points" in explanation_result:
+                    response += f"\n\n🔑 **Ключевые моменты:**\n"
+                    for point in explanation_result["key_points"][:3]:
+                        response += f"• {point}\n"
+
+                return response
+
+        # Если концепт не извлекли или объяснение не удалось
+        return "🤔 Не удалось найти информацию в вашем конспекте. Попробуйте переформулировать вопрос или уточнить, что именно вас интересует."
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка в резервном ConceptExplainer: {e}")
+        return "❌ Не удалось обработать ваш запрос. Попробуйте задать вопрос по-другому."
+
+
+def _extract_possible_concept(query: str) -> str:
+    """
+    Пытается извлечь концепт из общего запроса
+    """
+    question_words = {'что', 'как', 'почему', 'где', 'когда', 'зачем', 'какой', 'какая', 'какое', 'какие'}
+    words = query.lower().split()
+
+    # Ищем существительные и важные термины
+    content_words = [word for word in words if word not in question_words and len(word) > 3]
+
+    if len(content_words) >= 2:
+        return " ".join(content_words[-2:])
+    elif content_words:
+        return content_words[-1]
+    else:
+        return " ".join(words[1:]) if len(words) > 1 else query
+
 
 async def _handle_concept_explanation(user_id: int, query: str) -> str:
     """Обработка запросов на объяснение понятий"""
@@ -143,54 +350,85 @@ async def _handle_concept_explanation(user_id: int, query: str) -> str:
         logger.error(f"❌ Ошибка объяснения: {e}")
         return f"❌ Не удалось объяснить понятие. Попробуйте задать вопрос по-другому."
 
-async def _handle_source_finding(user_id: int, query: str) -> str:
-    """Обработка запросов на поиск источников"""
+
+async def _get_context_from_rag(user_id: int, query: str) -> str:
+    """Получает контекст из RAG, возвращает пустую строку, если RAG не нашел ответ."""
     try:
-        context = await _get_context_from_notes(user_id, query)
+        # ⚠️ Здесь важно, чтобы _rag_agent.run возвращал чистый сигнал "NO_RAG_ANSWER" при неудаче
+        context_response = await asyncio.to_thread(_rag_agent.run, user_id, query)
+
+        # Проверка на сигнал неудачи
+        if context_response == "NO_RAG_ANSWER" or "нет информации" in context_response.lower():
+            return ""
+
+        # Если RAG что-то ответил, возвращаем это как контекст (ограничиваем длину)
+        if len(context_response) > 1000:
+            return context_response[:1000] + "..."
+
+        return context_response
+
+    except Exception as e:
+        logger.warning(f"Не удалось получить контекст из RAG: {e}")
+        return ""
+
+async def _handle_source_finding(user_id: int, query: str) -> str:
+    try:
         topic = _extract_topic_from_query(query)
-        
+
         if not topic:
             return "❌ Не смог определить тему для поиска. Попробуйте: 'Найди материалы по [теме]'"
-        
-        # Получаем источники от агента
+
+        # Получаем контекст, чтобы LLM мог дать персонализированные рекомендации
+        context = await _get_context_from_rag(user_id, topic)
+
         sources_result = await asyncio.to_thread(
             _source_finder.find_sources,
             topic,
             context
         )
-        
+
         if sources_result and "sources" in sources_result:
             response = f"📚 **Материалы по теме: {topic}**\n\n"
-            
-            # Группируем источники по типам
-            sources_by_type = {}
-            for source in sources_result["sources"]:
-                source_type = source.get("type", "разное")
-                if source_type not in sources_by_type:
-                    sources_by_type[source_type] = []
-                sources_by_type[source_type].append(source)
-            
-            # Формируем ответ
-            for source_type, sources in sources_by_type.items():
-                response += f"**{source_type.upper()}:**\n"
-                for source in sources[:3]:  # Ограничиваем 3 источниками на тип
-                    response += f"• **{source['name']}**"
+
+            # 💡 ФИКС: Используем словарь, который уже сгруппирован агентом
+            sources_by_type = sources_result["sources"]
+
+            for normalized_type, sources in sources_by_type.items():
+                if not sources:
+                    continue
+
+                # Используем тип с эмодзи из первого элемента (он есть, если агент корректно отработал)
+                source_type_display = sources[0].get('type_with_emoji', normalized_type.upper())
+
+                response += f"**{source_type_display}:**\n"
+
+                # Выводим до 3 источников каждого типа
+                for source in sources[:3]:
+                    level = source.get('level', 'N/A')
+                    language = source.get('language', 'N/A')
+
+                    response += f"• **{source['name']}** ({level.capitalize()})"
+
                     if source.get('description'):
-                        response += f" - {source['description']}"
-                    if source.get('link'):
-                        response += f"\n  🔗 {source['link']}"
+                        response += f"\n  — *{source['description']}*"
+
+                    response += f" [{language.capitalize()}]"
+
                     response += "\n"
                 response += "\n"
-            
+
             if "study_path" in sources_result:
                 response += f"🎯 **Рекомендуемый порядок изучения:**\n"
                 for stage in sources_result["study_path"][:3]:
                     response += f"• {stage}\n"
-            
+
+            if not context:
+                response += f"\n---\n*ℹ️ Эти рекомендации общие. Для персонализированных материалов загрузите свой конспект.*"
+
             return response
         else:
             return "❌ Не удалось найти подходящие источники по этой теме."
-            
+
     except Exception as e:
         logger.error(f"❌ Ошибка поиска источников: {e}")
         return "❌ Произошла ошибка при поиске материалов. Попробуйте другую тему."
