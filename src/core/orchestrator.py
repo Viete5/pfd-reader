@@ -8,7 +8,9 @@ from src.agents.RAG import RAGAgent
 from src.agents.concept_explainer import ConceptExplainerAgent
 from src.agents.source_finder import SourceFinderAgent
 from src.agents.study_advisor import StudyAdvisorAgent
-
+#
+from src.agents.quiz_agent import QuizAgent
+#
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -20,7 +22,9 @@ _rag_agent = RAGAgent()
 _concept_explainer = ConceptExplainerAgent()
 _source_finder = SourceFinderAgent()
 _study_advisor = StudyAdvisorAgent()
-
+#
+_quiz_agent = QuizAgent()
+#
 async def handle_document_upload(user_id: int, file_path: str) -> str:
     """
     Обрабатывает загрузку конспекта студента
@@ -67,7 +71,10 @@ async def handle_user_query(user_id: int, query: str) -> str:
             return get_help_message()
 
         query_type = _analyze_query_type(query)
-
+        #
+        if any(word in query.lower() for word in ['/quiz', 'квиз', 'тест']):
+            return await _handle_quiz(user_id, query)
+        #
         if query_type in ["study_advice", "notes_improvement", "study_plan"]:
             # Эти агенты не отвечают на основе конспекта, они генерируют советы/планы.
             # RAG для них не нужен, поэтому перенаправляем сразу.
@@ -557,7 +564,40 @@ async def _handle_study_plan(user_id: int, query: str) -> str:
         logger.error(f"❌ Ошибка создания плана: {e}")
         return "❌ Произошла ошибка при создании учебного плана."
 
+#
+async def _handle_quiz(user_id: int, query: str) -> str:
+    """
+    Генерация quiz из 10 вопросов по загруженному конспекту.
+    """
+    try:
+        # Берём релевантный контекст из конспекта пользователя
+        context = await _get_context_from_notes(user_id, "ключевые темы конспекта")
 
+        if not context:
+            return "❌ Не удалось найти текст конспекта. Сначала загрузите PDF и задайте по нему пару вопросов."
+
+        # Генерация квиза отдельным агентом (через пул потоков, как у других)
+        quiz_data = await asyncio.to_thread(_quiz_agent.generate_quiz, context)
+        questions = quiz_data.get("questions", [])
+
+        if not questions:
+            return "❌ Не удалось сгенерировать quiz. Попробуйте ещё раз."
+
+        # Формируем текст для Telegram
+        response = "📝 **Quiz по вашему конспекту (10 вопросов):**\n\n"
+        for i, q in enumerate(questions, start=1):
+            response += f"{i}. {q.get('question', 'Вопрос')}\n"
+            for opt in q.get("options", []):
+                response += f"   {opt}\n"
+            response += "\n"
+
+        response += "Напишите номера вопросов и ваши варианты ответов, чтобы проверить себя."
+        return response
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации quiz: {e}")
+        return "❌ Произошла ошибка при создании quiz. Попробуйте ещё раз позже."
+#
 def get_retrieved_context(self, topic: str, k: int = 4) -> str:
     """
     Возвращает ЧИСТЫЙ извлеченный текст (чанки), ИГНОРИРУЯ ПАМЯТЬ и LLM.
