@@ -14,7 +14,7 @@ def _get_embeddings():
     return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
 class RAGLoader:
-    def __init__(self, user_id: str | int):
+    def __init__(self, user_id: int):
         self.user_id = user_id
         self.user_db_path = get_user_db_path(user_id)
 
@@ -71,7 +71,10 @@ class RAGLoader:
         Используется только для предоставления контекста другим агентам.
         """
         # 1. Используем чистый ретривер (из RAGLoader)
-        docs = self.qa_chain.retriever.get_relevant_documents(topic)  # self.qa_chain.retriever - это ваш retriever
+        retriever = self.vectorstore.as_retriever(search_kwargs={"k": k})
+        docs = retriever.get_relevant_documents(topic)  # self.qa_chain.retriever - это ваш retriever
+        if not docs:
+            return ""
 
         # 2. Объединяем в одну строку
         context = "\n---\n".join([doc.page_content for doc in docs])

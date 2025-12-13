@@ -50,10 +50,10 @@ class UserRAGQuery:
     Класс, который создает и хранит RAG-цепочку с памятью для одного пользователя.
     """
 
-    def __init__(self, user_id: str | int):
+    def __init__(self, user_id: int):
         # 1. Загружаем компоненты
-        loader = RAGLoader(user_id)
-        llm, retriever = loader.get_components()
+        self.loader = RAGLoader(user_id)
+        llm, retriever = self.loader.get_components()
 
         # 2. Создание памяти с суммаризацией
         self.memory = ConversationSummaryBufferMemory(

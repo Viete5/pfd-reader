@@ -18,7 +18,7 @@ AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 EMBEDDING_MODEL = "cointegrated/rubert-tiny2"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 100
-RETRIEVER_K = 3
+RETRIEVER_K = 5
 LLM_TEMPERATURE = 0.1
 
 # Validation
