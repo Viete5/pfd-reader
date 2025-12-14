@@ -10,3 +10,4 @@ logging.basicConfig(
 if __name__ == "__main__":
     print("🚀 Запуск StudyMate бота...")
     asyncio.run(start_bot())
+#test
