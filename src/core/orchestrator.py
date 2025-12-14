@@ -17,7 +17,8 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
+_pending_quiz_count: Dict[int, bool] = {}
+_pending_quiz_topic: Dict[int, str] = {}
 # Создаем экземпляры агентов
 _rag_agent = RAGAgent()
 _concept_explainer = ConceptExplainerAgent()
@@ -66,7 +67,51 @@ async def handle_user_query(user_id: int, query: str) -> str:
     Обрабатывает запросы студентов с использованием специализированных агентов
     """
     try:
+        logger.info(f"💬 Запрос от студента {user_id}: {query}")
 
+        text_lower = query.lower().strip()
+
+        # Простые команды
+        if text_lower in ['/start', '/help', 'помощь', 'help']:
+            return get_help_message()
+
+        # Пользователь просит сделать квиз
+        quiz_triggers = [
+            'квиз',
+            'тест',
+            'сделай квиз',
+            'составь квиз',
+            'сделай тест',
+            'составь тест',
+        ]
+
+        # считаем квиз-триггером, если фраза ВСТРЕЧАЕТСЯ в тексте
+        if any(t in text_lower for t in quiz_triggers) or text_lower == '/quiz':
+            # сначала спрашиваем тему
+            _pending_quiz_topic[user_id] = ""  # маркер, что ждём тему
+            _pending_quiz_count[user_id] = False
+            return ("По какой теме сделать квиз? "
+                    "Напишите тему из конспекта или слово \"весь\" для квиза по всему конспекту.")
+
+        # Пользователь отвечает темой для квиза
+        if user_id in _pending_quiz_topic and _pending_quiz_topic[user_id] == "":
+            topic_text = text_lower.strip()
+            if not topic_text:
+                return ("Пожалуйста, укажите тему или слово \"весь\" "
+                        "для квиза по всему конспекту.")
+            _pending_quiz_topic[user_id] = topic_text
+            _pending_quiz_count[user_id] = True
+            return "На сколько вопросов сделать квиз? Напишите число от 1 до 10."
+
+        # Пользователь уже в режиме выбора количества и прислал число
+        if _pending_quiz_count.get(user_id) and text_lower.isdigit():
+            n = int(text_lower)
+            if not (1 <= n <= 10):
+                return "Пожалуйста, введите число от 1 до 10."
+
+            _pending_quiz_count[user_id] = False
+            topic = _pending_quiz_topic.get(user_id, "весь")
+            return await _handle_quiz(user_id, f"quiz {n}", topic)
         filtered_query = filter_input_query(query)
         if not filtered_query:
             # Если запрос был заблокирован фильтром
@@ -74,11 +119,7 @@ async def handle_user_query(user_id: int, query: str) -> str:
 
         query = filtered_query
 
-        logger.info(f"💬 Запрос от студента {user_id}: {query}")
 
-        # Простые команды
-        if query.lower() in ['/start', '/help', 'помощь', 'help']:
-            return get_help_message()
 
         query_type = _analyze_query_type(query)
         logger.info(f"🔍 Тип запроса определен как: {query_type}")
@@ -572,6 +613,66 @@ async def _handle_study_plan(user_id: int, query: str) -> str:
     except Exception as e:
         logger.error(f"❌ Ошибка создания плана: {e}")
         return "❌ Произошла ошибка при создании учебного плана."
+
+async def _handle_quiz(user_id: int, query: str, topic: str = "весь") -> str:
+    try:
+        # 1. извлекаем число, по умолчанию 10
+        num_questions = 10
+        numbers = re.findall(r'\d+', query)
+        if numbers:
+            try:
+                n = int(numbers[0])
+                if 1 <= n <= 10:
+                    num_questions = n
+            except ValueError:
+                pass
+
+        # 2. получаем текст конспекта
+        if topic and topic != "весь":
+            # берём релевантный контекст по теме
+            context = await _get_context_from_notes(user_id, topic)
+        else:
+            # весь конспект
+            context = await asyncio.to_thread(_rag_agent.get_note_text, user_id)
+
+        print("QUIZ CONTEXT LEN:", len(context))
+
+        if not context:
+            return "❌ Не удалось найти текст конспекта по этой теме. Попробуйте другую формулировку или \"весь\"."
+
+        # 3. генерируем квиз
+        quiz_data = await asyncio.to_thread(_quiz_agent.generate_quiz, context, num_questions, topic)
+        questions = quiz_data.get("questions", [])
+
+        if not questions:
+            return "❌ Не удалось сгенерировать quiz. Попробуйте ещё раз."
+
+        response = f"📝 <i>Quiz по вашему конспекту</i> \n({len(questions)} вопросов)\n\n"
+
+        for i, q in enumerate(questions, 1):
+            question = q.get("question", "Вопрос")
+            options = q.get("options", [])
+            correct = q.get("correct_answer", "")
+            explanation = q.get("explanation", "")
+
+            response += f"<b>{i}. {question}</b>\n\n"
+            for opt in options:
+                response += f"• {opt}\n"
+
+            # скрытый правильный ответ
+            response += f"\nОтвет: <tg-spoiler>{correct}</tg-spoiler>\n"
+
+            # скрытое объяснение, если есть
+            if explanation:
+                response += f"Объяснение: <tg-spoiler>{explanation}</tg-spoiler>\n"
+
+            response += "\n──────────────\n\n"
+
+        return response
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка в _handle_quiz: {e}")
+        return "❌ Произошла ошибка при создании quiz."
 
 
 async def _get_context_from_notes(user_id: int, query: str) -> str:

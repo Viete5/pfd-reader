@@ -55,6 +55,8 @@ class UserRAGQuery:
         self.loader = RAGLoader(user_id)
         llm, retriever = self.loader.get_components()
 
+        self.retriever = retriever
+
         # 2. Создание памяти с суммаризацией
         self.memory = ConversationSummaryBufferMemory(
             llm=llm,

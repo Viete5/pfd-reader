@@ -67,3 +67,43 @@ class RAGAgent:
 
             # 3. Удаляем сессию
             del self.user_sessions[user_id]
+    def get_note_text(self, user_id: int, max_chars: int = 15000) -> str:
+        """
+        Возвращает сырой текст конспекта пользователя для генерации квиза.
+        Берёт текст из retriever внутри UserRAGQuery.
+        """
+        if user_id not in self.user_sessions:
+            print("get_note_text: нет сессии для user_id", user_id)
+            return ""
+
+        try:
+            session = self.user_sessions[user_id]
+            retriever = getattr(session, "retriever", None)
+            if retriever is None:
+                print("get_note_text: у session нет поля retriever")
+                return ""
+
+            docs = retriever.get_relevant_documents("основные темы и понятия конспекта")
+            if not docs:
+                print("get_note_text: retriever вернул 0 документов")
+                return ""
+
+            chunks = []
+            total = 0
+            for doc in docs:
+                text = getattr(doc, "page_content", "")
+                if not text:
+                    continue
+                if total + len(text) > max_chars:
+                    chunks.append(text[: max_chars - total])
+                    break
+                chunks.append(text)
+                total += len(text)
+
+            full_text = "\n\n".join(chunks)
+            print("get_note_text: длина текста для квиза =", len(full_text))
+            return full_text
+
+        except Exception as e:
+            print(f"Ошибка получения текста для квиза: {e}")
+            return ""
