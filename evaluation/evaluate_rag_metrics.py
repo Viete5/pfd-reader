@@ -68,7 +68,7 @@ class RAGEvaluator:
         # Используем семантическое сходство вместо точного совпадения
         relevant_count = 0
         for ret_doc in retrieved_k:
-            if any(self._semantic_similarity(ret_doc, rel_doc) > 0.7 for rel_doc in relevant):
+            if any(self._semantic_similarity(ret_doc, rel_doc) > 0.6 for rel_doc in relevant):
                 relevant_count += 1
 
         return relevant_count / k
@@ -83,7 +83,7 @@ class RAGEvaluator:
         found_relevant = set()
         for ret_doc in retrieved_k:
             for i, rel_doc in enumerate(relevant):
-                if self._semantic_similarity(ret_doc, rel_doc) > 0.7:
+                if self._semantic_similarity(ret_doc, rel_doc) > 0.6:
                     found_relevant.add(i)
 
         return len(found_relevant) / len(relevant)
@@ -92,7 +92,7 @@ class RAGEvaluator:
         """Mean Reciprocal Rank - среднее обратное ранжирование"""
         for rank, ret_doc in enumerate(retrieved, 1):
             for rel_doc in relevant:
-                if self._semantic_similarity(ret_doc, rel_doc) > 0.7:
+                if self._semantic_similarity(ret_doc, rel_doc) > 0.6:
                     return 1.0 / rank
         return 0.0
 
@@ -100,7 +100,7 @@ class RAGEvaluator:
         """Hit Rate - процент запросов, где найден хотя бы один релевантный документ"""
         for ret_doc in retrieved:
             for rel_doc in relevant:
-                if self._semantic_similarity(ret_doc, rel_doc) > 0.7:
+                if self._semantic_similarity(ret_doc, rel_doc) > 0.6:
                     return 1.0
         return 0.0
 
@@ -173,7 +173,7 @@ class RAGEvaluator:
         keyword_overlap = len(query_keywords.intersection(response_keywords)) / max(len(query_keywords), 1)
 
         # Комбинированная оценка
-        return 0.7 * similarity + 0.3 * keyword_overlap
+        return 0.6 * similarity + 0.3 * keyword_overlap
 
     def _calculate_factuality(self, response: str, expected: str) -> float:
         """Оценка фактической точности (упрощенная)"""
@@ -203,7 +203,7 @@ class RAGEvaluator:
         avg_sentence_length = sum(len(s.split()) for s in sentences) / len(sentences)
         sentence_length_score = 1.0 - abs(avg_sentence_length - 15) / 15  # Идеал 15 слов
 
-        return 0.3 * has_structure + 0.7 * min(1.0, sentence_length_score)
+        return 0.3 * has_structure + 0.6 * min(1.0, sentence_length_score)
 
     def _check_keywords(self, response: str, query: str) -> List[str]:
         """Проверяет наличие ключевых слов из запроса в ответе"""

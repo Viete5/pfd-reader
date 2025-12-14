@@ -56,7 +56,7 @@ class RAGLoader:
         )
 
     def close(self):
-        """НОВЫЙ МЕТОД: Явно закрывает соединение ChromaDB/SQLite."""
+        """Явно закрывает соединение ChromaDB/SQLite."""
         try:
             # Chroma хранит ссылку на клиент. Закрываем его, чтобы освободить файл.
             if hasattr(self.vectorstore, '_client'):
@@ -84,18 +84,4 @@ class RAGLoader:
             return context[:2000] + " [Контекст обрезан для передачи агенту]"
 
         return context
-    # def _create_qa_chain(self):
-    #     """Создаёт стандартную RAG-цепочку 'stuff' (всё в один промпт)."""
-    #     return RetrievalQA.from_chain_type(
-    #         llm=self.llm,
-    #         chain_type="stuff",
-    #         retriever=self.retriever
-    #     )
-    #
-    # def ask(self, question: str) -> str:
-    #     """Отправляет вопрос в цепочку и возвращает ответ."""
-    #     try:
-    #         response = self.qa_chain.invoke({"query": question})
-    #         return response.get('result', 'Не удалось получить ответ.')
-    #     except Exception:
-    #         return "Произошла ошибка при обработке вашего запроса."
+

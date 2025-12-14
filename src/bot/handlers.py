@@ -1,6 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import Message, Document
 from aiogram.filters import Command
+from aiogram.enums import ParseMode
 import os
 import tempfile
 from src.core.orchestrator import handle_document_upload, handle_user_query, get_help_message
@@ -53,6 +54,6 @@ async def handle_text(message: Message):
     
     try:
         result = await handle_user_query(message.from_user.id, user_text)
-        await message.answer(result)
+        await message.answer(result, parse_mode=ParseMode.HTML)
     except Exception as e:
         await message.answer("❌ Произошла ошибка при обработке запроса. Попробуйте еще раз.")

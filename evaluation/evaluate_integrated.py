@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, Any
 import numpy as np
-
+from .evaluate_rag_metrics import RAGEvaluator
+from .evaluate_system_metrics import SystemMetricsEvaluator
+from .evaluate_concept_agents import ConceptAgentEvaluator, run_concept_agent_evaluation
 
 class IntegratedEvaluator:
     def __init__(self):
@@ -18,7 +20,7 @@ class IntegratedEvaluator:
 
         # 1. Оценка RAG системы
         print("\n🔍 Этап 1: Оценка RAG системы")
-        from evaluate_rag_metrics import RAGEvaluator
+
         rag_evaluator = RAGEvaluator()
 
         test_queries_rag = [
@@ -45,14 +47,14 @@ class IntegratedEvaluator:
 
         # 2. Оценка агентов концептов
         print("\n🧠 Этап 2: Оценка агентов концептов")
-        from evaluate_concept_agents import ConceptAgentEvaluator, run_concept_agent_evaluation
+
 
         concept_metrics = await run_concept_agent_evaluation()
         self.results["concept_agents"] = concept_metrics
 
         # 3. Системная оценка
         print("\n⚡ Этап 3: Системная оценка")
-        from evaluate_system_metrics import SystemMetricsEvaluator
+
 
         system_evaluator = SystemMetricsEvaluator()
         system_metrics = await system_evaluator.run_comprehensive_evaluation(user_id)

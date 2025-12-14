@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
 from sentence_transformers import SentenceTransformer
 import pandas as pd
+import re
 
 
 class ConceptAgentEvaluator:
@@ -22,6 +23,8 @@ class ConceptAgentEvaluator:
         for test_case in test_texts:
             text = test_case["text"]
             expected_concepts = test_case["expected_concepts"]
+
+
 
             try:
                 extracted_concepts = agent.extract_concepts(text, max_concepts=10)
@@ -106,6 +109,8 @@ class ConceptAgentEvaluator:
             concept = test_case["concept"]
             expected_explanation = test_case.get("expected_explanation", "")
 
+
+
             try:
                 explanation_result = agent.explain_concept(concept)
 
@@ -148,16 +153,17 @@ class ConceptAgentEvaluator:
         if results:
             df = pd.DataFrame(results)
             return {
-                "avg_clarity": df["clarity"].mean(),
-                "avg_completeness": df["completeness"].mean(),
-                "avg_structure": df["structure"].mean(),
-                "avg_semantic_similarity": df["semantic_similarity"].mean(),
+                "avg_clarity": df["clarity"].mean() if "clarity" in df.columns else 0,
+                "avg_completeness": df["completeness"].mean() if "completeness" in df.columns else 0,
+                "avg_structure": df["structure"].mean() if "structure" in df.columns else 0,
+                "avg_semantic_similarity": df["semantic_similarity"].mean() if "semantic_similarity" in df.columns else 0,
                 "explanation_rate": len([r for r in results if "error" not in r]) / len(results),
                 "examples_rate": df["has_examples"].mean() if "has_examples" in df.columns else 0,
                 "key_points_rate": df["has_key_points"].mean() if "has_key_points" in df.columns else 0
             }
 
         return {"error": "No results"}
+
 
     def _evaluate_clarity(self, text: str) -> float:
         """Оценка ясности и понятности текста"""

@@ -83,14 +83,14 @@ async def handle_user_query(user_id: int, query: str) -> str:
         query_type = _analyze_query_type(query)
         logger.info(f"🔍 Тип запроса определен как: {query_type}")
 
-        if query_type in ["study_advice", "notes_improvement", "study_plan", "source_finding", "concept_explainer"]:
+        if query_type in ["study_advice", "notes_improvement", "study_plan", "source_finding", "concept_explanation"]:
             # Эти агенты не отвечают на основе конспекта, они генерируют советы/планы.
             # RAG для них не нужен, поэтому перенаправляем сразу.
-            if query_type == "study_advice":  # НЕ РАБОТАЕТ
+            if query_type == "study_advice":
                 return await _handle_study_advice(user_id, query)
-            elif query_type == "notes_improvement":  # НЕ РАБОТАЕТ
+            elif query_type == "notes_improvement":
                 return await _handle_notes_improvement(user_id, query)
-            elif query_type == "study_plan":  # НЕ РАБОТАЕТ
+            elif query_type == "study_plan":
                 return await _handle_study_plan(user_id, query)
             elif query_type == "source_finding":
                 return await _handle_source_finding(user_id, query)
@@ -582,7 +582,7 @@ async def _get_context_from_notes(user_id: int, query: str) -> str:
 
         # 2. Используем ЧИСТЫЙ метод извлечения
         context = await asyncio.to_thread(
-            rag_session.loader.get_context_from_notes,
+            rag_session.loader.get_retrieved_context,
             query
         )
         return context
