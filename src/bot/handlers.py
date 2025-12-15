@@ -4,7 +4,14 @@ from aiogram.filters import Command
 from aiogram.enums import ParseMode
 import os
 import tempfile
-from src.core.orchestrator import handle_document_upload, handle_user_query, get_help_message
+from src.core.orchestrator import (
+    handle_document_upload,
+    handle_user_query,
+    get_help_message,
+    handle_quiz,
+    _pending_quiz_topic,
+    _pending_quiz_count,
+)
 
 router = Router()
 
@@ -41,19 +48,26 @@ async def handle_document(message: Message):
     except Exception as e:
         await message.answer("❌ Произошла ошибка при обработке файла. Попробуйте еще раз.")
 
-@router.message(F.text)
 async def handle_text(message: Message):
     """Обработчик текстовых сообщений"""
     user_text = message.text.strip()
     
     if not user_text:
         return
-        
+
+    user_id = message.from_user.id
+
     # Показываем индикатор набора
     await message.bot.send_chat_action(message.chat.id, "typing")
-    
+
     try:
-        result = await handle_user_query(message.from_user.id, user_text)
+        # Если пользователь уже в процессе квиза — продолжаем квиз
+        if _pending_quiz_topic.get(user_id) is not None or _pending_quiz_count.get(user_id):
+            result = await handle_quiz(user_id, user_text)
+        else:
+            # Иначе — обычная обработка запроса
+            result = await handle_user_query(user_id, user_text)
+
         await message.answer(result, parse_mode=ParseMode.HTML)
-    except Exception as e:
+    except Exception:
         await message.answer("❌ Произошла ошибка при обработке запроса. Попробуйте еще раз.")
