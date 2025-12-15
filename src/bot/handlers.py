@@ -4,14 +4,7 @@ from aiogram.filters import Command
 from aiogram.enums import ParseMode
 import os
 import tempfile
-from src.core.orchestrator import (
-    handle_document_upload,
-    handle_user_query,
-    get_help_message,
-    handle_quiz,
-    _pending_quiz_topic,
-    _pending_quiz_count,
-)
+from src.core.orchestrator import handle_document_upload, handle_user_query, get_help_message
 
 router = Router()
 
@@ -55,20 +48,12 @@ async def handle_text(message: Message):
     
     if not user_text:
         return
-
-    user_id = message.from_user.id
-
+        
     # Показываем индикатор набора
     await message.bot.send_chat_action(message.chat.id, "typing")
-
+    
     try:
-        # Если пользователь уже в процессе квиза — продолжаем квиз
-        if _pending_quiz_topic.get(user_id) is not None or _pending_quiz_count.get(user_id):
-            result = await handle_quiz(user_id, user_text)
-        else:
-            # Иначе — обычная обработка запроса
-            result = await handle_user_query(user_id, user_text)
-
+        result = await handle_user_query(message.from_user.id, user_text)
         await message.answer(result, parse_mode=ParseMode.HTML)
-    except Exception:
+    except Exception as e:
         await message.answer("❌ Произошла ошибка при обработке запроса. Попробуйте еще раз.")
