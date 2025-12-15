@@ -48,6 +48,7 @@ async def handle_document(message: Message):
     except Exception as e:
         await message.answer("❌ Произошла ошибка при обработке файла. Попробуйте еще раз.")
 
+@router.message(F.text)
 async def handle_text(message: Message):
     """Обработчик текстовых сообщений"""
     user_text = message.text.strip()
