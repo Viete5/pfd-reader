@@ -42,6 +42,10 @@ async def handle_document_upload(user_id: int, file_path: str) -> str:
 
         if success:
             logger.info(f"✅ Конспект студента {user_id} успешно обработан")
+            try:
+                _ = _rag_agent.run(user_id, "инициализация сессии")
+            except Exception as e:
+                logger.warning(f"Не удалось заранее инициализировать RAG-сессию: {e}")
             return """✅ Ваш конспект успешно обработан!
 
 Теперь я могу помочь вам:
@@ -63,63 +67,21 @@ async def handle_document_upload(user_id: int, file_path: str) -> str:
 
 
 async def handle_user_query(user_id: int, query: str) -> str:
-    """
-    Обрабатывает запросы студентов с использованием специализированных агентов
-    """
     try:
         logger.info(f"💬 Запрос от студента {user_id}: {query}")
-
         text_lower = query.lower().strip()
 
         # Простые команды
         if text_lower in ['/start', '/help', 'помощь', 'help']:
             return get_help_message()
 
-        # Пользователь просит сделать квиз
+        # Квиз — только детект, вся логика дальше в handle_quiz
         quiz_triggers = [
-            'квиз',
-            'тест',
-            'сделай квиз',
-            'составь квиз',
-            'сделай тест',
-            'составь тест',
+            'квиз', 'тест', 'сделай квиз',
+            'составь квиз', 'сделай тест', 'составь тест',
         ]
-
-        # считаем квиз-триггером, если фраза ВСТРЕЧАЕТСЯ в тексте
         if any(t in text_lower for t in quiz_triggers) or text_lower == '/quiz':
-            # сначала спрашиваем тему
-            _pending_quiz_topic[user_id] = ""  # маркер, что ждём тему
-            _pending_quiz_count[user_id] = False
-            return ("По какой теме сделать квиз? "
-                    "Напишите тему из конспекта или слово \"весь\" для квиза по всему конспекту.")
-
-        # Пользователь отвечает темой для квиза
-        if user_id in _pending_quiz_topic and _pending_quiz_topic[user_id] == "":
-            topic_text = text_lower.strip()
-            if not topic_text:
-                return ("Пожалуйста, укажите тему или слово \"весь\" "
-                        "для квиза по всему конспекту.")
-            _pending_quiz_topic[user_id] = topic_text
-            _pending_quiz_count[user_id] = True
-            return "На сколько вопросов сделать квиз? Напишите число от 1 до 10."
-
-        # Пользователь уже в режиме выбора количества и прислал число
-        if _pending_quiz_count.get(user_id) and text_lower.isdigit():
-            n = int(text_lower)
-            if not (1 <= n <= 10):
-                return "Пожалуйста, введите число от 1 до 10."
-
-            _pending_quiz_count[user_id] = False
-            topic = _pending_quiz_topic.get(user_id, "весь")
-            return await _handle_quiz(user_id, f"quiz {n}", topic)
-        filtered_query = filter_input_query(query)
-        if not filtered_query:
-            # Если запрос был заблокирован фильтром
-            return "❌ Ваш запрос был отклонен системой безопасности. Пожалуйста, переформулируйте."
-
-        query = filtered_query
-
-
+            return await handle_quiz(user_id, query)
 
         query_type = _analyze_query_type(query)
         logger.info(f"🔍 Тип запроса определен как: {query_type}")
@@ -614,84 +576,150 @@ async def _handle_study_plan(user_id: int, query: str) -> str:
         logger.error(f"❌ Ошибка создания плана: {e}")
         return "❌ Произошла ошибка при создании учебного плана."
 
-async def _handle_quiz(user_id: int, query: str, topic: str = "весь") -> str:
+async def handle_quiz(user_id: int, query: str) -> str:
+    """
+    Вся логика работы с квизом (диалог + генерация).
+    Вызывается из handle_user_query.
+    """
+    return await _handle_quiz(user_id, query)
+
+async def _handle_quiz(user_id: int, query: str) -> str:
     try:
-        # 1. извлекаем число, по умолчанию 10
-        num_questions = 10
-        numbers = re.findall(r'\d+', query)
-        if numbers:
-            try:
-                n = int(numbers[0])
-                if 1 <= n <= 10:
-                    num_questions = n
-            except ValueError:
-                pass
+        text_lower = query.lower().strip()
 
-        # 2. получаем текст конспекта
-        if topic and topic != "весь":
-            # берём релевантный контекст по теме
-            context = await _get_context_from_notes(user_id, topic)
-        else:
-            # весь конспект
-            context = await asyncio.to_thread(_rag_agent.get_note_text, user_id)
+        # 1) Первый шаг: пользователь только что написал "квиз/тест"
+        if user_id not in _pending_quiz_topic and user_id not in _pending_quiz_count:
+            _pending_quiz_topic[user_id] = ""
+            _pending_quiz_count[user_id] = False
+            return ('По какой теме сделать квиз? Напишите тему из конспекта '
+                    'или слово "весь" для квиза по всему конспекту.')
 
-        print("QUIZ CONTEXT LEN:", len(context))
+        # 2) Ещё нет темы — текущий ввод считаем темой
+        if _pending_quiz_topic.get(user_id, "") == "":
+            topic_text = text_lower.strip()
+            if not topic_text:
+                return ('Пожалуйста, укажите тему или слово "весь" '
+                        'для квиза по всему конспекту.')
+            _pending_quiz_topic[user_id] = topic_text
+            _pending_quiz_count[user_id] = True
+            return "На сколько вопросов сделать квиз? Напишите число от 1 до 10."
 
-        if not context:
-            return "❌ Не удалось найти текст конспекта по этой теме. Попробуйте другую формулировку или \"весь\"."
+        # 3) Ждём число вопросов
+        if _pending_quiz_count.get(user_id) and text_lower.isdigit():
+            n = int(text_lower)
+            if not (1 <= n <= 10):
+                return "Пожалуйста, введите число от 1 до 10."
 
-        # 3. генерируем квиз
-        quiz_data = await asyncio.to_thread(_quiz_agent.generate_quiz, context, num_questions, topic)
-        questions = quiz_data.get("questions", [])
+            _pending_quiz_count[user_id] = False
+            topic = _pending_quiz_topic.get(user_id, "весь")
 
-        if not questions:
-            return "❌ Не удалось сгенерировать quiz. Попробуйте ещё раз."
+            # 3.1 Контекст по теме или по всему конспекту
+            if topic and topic != "весь":
+                context = await _get_context_from_notes(user_id, topic)
+            else:
+                context = await asyncio.to_thread(_rag_agent.get_note_text, user_id)
 
-        response = f"📝 <i>Quiz по вашему конспекту</i> \n({len(questions)} вопросов)\n\n"
+            print("QUIZ CONTEXT LEN:", len(context))
+            if not context:
+                _pending_quiz_topic.pop(user_id, None)
+                return ("❌ Не удалось найти текст конспекта по этой теме. "
+                        "Попробуйте другую формулировку или слово \"весь\".")
 
-        for i, q in enumerate(questions, 1):
-            question = q.get("question", "Вопрос")
-            options = q.get("options", [])
-            correct = q.get("correct_answer", "")
-            explanation = q.get("explanation", "")
+            # 3.2 Генерация квиза
+            quiz_data = await asyncio.to_thread(
+                _quiz_agent.generate_quiz,
+                context,
+                n,
+                topic,          # если добавлял topic в сигнатуру
+            )
+            questions = quiz_data.get("questions", [])
+            if not questions:
+                _pending_quiz_topic.pop(user_id, None)
+                return "❌ Не удалось сгенерировать quiz. Попробуйте ещё раз."
 
-            response += f"<b>{i}. {question}</b>\n\n"
-            for opt in options:
-                response += f"• {opt}\n"
+            # 3.3 Формирование HTML‑ответа со спойлерами
+            response = f"📝 <i>Quiz по вашему конспекту</i> \n({len(questions)} вопросов)\n\n"
+            for i, q in enumerate(questions, 1):
+                question = q.get("question", "Вопрос")
+                options = q.get("options", [])
+                correct = q.get("correct_answer", "")
+                explanation = q.get("explanation", "")
 
-            # скрытый правильный ответ
-            response += f"\nОтвет: <tg-spoiler>{correct}</tg-spoiler>\n"
+                response += f"<b>{i}. {question}</b>\n\n"
+                for opt in options:
+                    response += f"• {opt}\n"
+                response += f"\nОтвет: <tg-spoiler>{correct}</tg-spoiler>\n"
+                if explanation:
+                    response += f"Объяснение: <tg-spoiler>{explanation}</tg-spoiler>\n"
+                response += "\n──────────────\n\n"
 
-            # скрытое объяснение, если есть
-            if explanation:
-                response += f"Объяснение: <tg-spoiler>{explanation}</tg-spoiler>\n"
+            _pending_quiz_topic.pop(user_id, None)
+            _pending_quiz_count.pop(user_id, None)
+            return response
 
-            response += "\n──────────────\n\n"
+        # 4) Если ждём число, а пришла не цифра
+        if _pending_quiz_count.get(user_id) and not text_lower.isdigit():
+            return "Пожалуйста, введите число от 1 до 10."
 
-        return response
+        # 5) Фолбэк: сброс состояния
+        _pending_quiz_topic.pop(user_id, None)
+        _pending_quiz_count.pop(user_id, None)
+        return 'Давайте начнём квиз сначала. Напишите "квиз", чтобы запустить тест.'
 
     except Exception as e:
         logger.error(f"❌ Ошибка в _handle_quiz: {e}")
         return "❌ Произошла ошибка при создании quiz."
 
+def get_retrieved_context(self, topic: str, k: int = 4) -> str:
+    """
+    Возвращает ЧИСТЫЙ извлеченный текст (чанки), ИГНОРИРУЯ ПАМЯТЬ и LLM.
+    Используется только для предоставления контекста другим агентам.
+    """
+    # 1. Используем чистый ретривер (из RAGLoader)
+    docs = self.qa_chain.retriever.get_relevant_documents(topic)  # self.qa_chain.retriever - это ваш retriever
 
-async def _get_context_from_notes(user_id: int, query: str) -> str:
-    """Получает релевантный контекст из конспектов пользователя, БЕЗ использования памяти RAG."""
+    # 2. Объединяем в одну строку
+    context = "\n---\n".join([doc.page_content for doc in docs])
+
+    # 3. Ограничиваем длину (для Concept Explainer)
+    if len(context) > 2000:
+        return context[:2000] + " [Контекст обрезан для передачи агенту]"
+
+    return context
+
+async def _get_context_from_notes(user_id: int, query: str, max_chars: int = 4000) -> str:
+    """Получает релевантный контекст из конспектов пользователя по теме query."""
     try:
-        # 1. Получаем сессию RAG (для доступа к ретриверу)
-        rag_session = _rag_agent._get_or_create_session(user_id)
+        session = _rag_agent._get_or_create_session(user_id)
+        retriever = getattr(session, "retriever", None)
+        if retriever is None:
+            logger.warning("get_context_from_notes: у session нет поля retriever")
+            return ""
 
-        # 2. Используем ЧИСТЫЙ метод извлечения
-        context = await asyncio.to_thread(
-            rag_session.loader.get_retrieved_context,
-            query
-        )
+        docs = await asyncio.to_thread(retriever.get_relevant_documents, query)
+        if not docs:
+            logger.info(f"get_context_from_notes: retriever вернул 0 документов по теме '{query}'")
+            return ""
+
+        chunks = []
+        total = 0
+        for doc in docs:
+            text = getattr(doc, "page_content", "")
+            if not text:
+                continue
+            if total + len(text) > max_chars:
+                chunks.append(text[: max_chars - total])
+                break
+            chunks.append(text)
+            total += len(text)
+
+        context = "\n\n".join(chunks)
+        logger.info(f"get_context_from_notes: длина контекста по теме '{query}' = {len(context)}")
         return context
 
     except Exception as e:
-        logger.warning(f"Не удалось получить чистый контекст: {e}")
+        logger.warning(f"Не удалось получить контекст по теме '{query}': {e}")
         return ""
-
 
 def _extract_concept_from_query(query: str) -> str:
     """Извлекает понятие из запроса"""
