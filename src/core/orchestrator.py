@@ -670,22 +670,7 @@ async def _handle_quiz(user_id: int, query: str) -> str:
         logger.error(f"❌ Ошибка в _handle_quiz: {e}")
         return "❌ Произошла ошибка при создании quiz."
 
-def get_retrieved_context(self, topic: str, k: int = 4) -> str:
-    """
-    Возвращает ЧИСТЫЙ извлеченный текст (чанки), ИГНОРИРУЯ ПАМЯТЬ и LLM.
-    Используется только для предоставления контекста другим агентам.
-    """
-    # 1. Используем чистый ретривер (из RAGLoader)
-    docs = self.qa_chain.retriever.get_relevant_documents(topic)  # self.qa_chain.retriever - это ваш retriever
 
-    # 2. Объединяем в одну строку
-    context = "\n---\n".join([doc.page_content for doc in docs])
-
-    # 3. Ограничиваем длину (для Concept Explainer)
-    if len(context) > 2000:
-        return context[:2000] + " [Контекст обрезан для передачи агенту]"
-
-    return context
 
 async def _get_context_from_notes(user_id: int, query: str, max_chars: int = 4000) -> str:
     """Получает релевантный контекст из конспектов пользователя по теме query."""
