@@ -119,7 +119,12 @@ async def handle_user_query(user_id: int, query: str) -> str:
 
         query = filtered_query
 
+        task_num = _extract_task_number(query)
 
+        # 2. Если нашли цифру И есть слова типа "реши", "задача"
+        if task_num and any(w in query.lower() for w in ['реши', 'задача', 'номер', 'пример']):
+            # Передаем управление в math_agent (функция описана внизу файла)
+            return await _handle_math_task_pdf(user_id, query, task_num)
 
         query_type = _analyze_query_type(query)
         logger.info(f"🔍 Тип запроса определен как: {query_type}")
@@ -572,7 +577,32 @@ async def _handle_notes_improvement(user_id: int, query: str) -> str:
     except Exception as e:
         logger.error(f"❌ Ошибка улучшения конспекта: {e}")
         return "❌ Произошла ошибка при анализе конспекта."
+        
+async def _handle_math_task_pdf(user_id: int, query: str, task_id: str):
+    """
+    Обработчик для MathAgent.
+    Принимает: user_id, исходный запрос (для логов) и чистый номер задачи (task_id).
+    """
+    logger.info(f"🧮 Запуск MathAgent для задачи {task_id}")
 
+    # 1. Формируем путь к файлу (он должен лежать там, куда его положил pdf_math_indexer)
+    # Обычно это папка pdf_cache в корне проекта
+    pdf_path = os.path.join(os.getcwd(), "pdf_cache", f"user_{user_id}.pdf")
+
+    if not os.path.exists(pdf_path):
+        return "⚠️ Я не нашел твой PDF файл. Пожалуйста, загрузи его снова (я помню только текст, но для решения нужен сам файл)."
+
+    # 2. Запускаем решение в отдельном потоке, чтобы бот не завис
+    # MathAgent сам найдет текст задачи внутри PDF, решит её и сгенерирует новый PDF
+    result = await asyncio.to_thread(_math_agent.solve_task, task_id, pdf_path)
+
+    # 3. Обрабатываем результат
+    if result["success"]:
+        # Возвращаем FSInputFile — aiogram поймет, что это файл, и отправит его как документ
+        return FSInputFile(result["pdf_path"])
+    else:
+        # Если ошибка (не нашел задачу или сбой LaTeX)
+        return f"❌ Не удалось решить задачу.\nПричина: {result.get('message', 'Неизвестная ошибка')}"
 
 async def _handle_study_plan(user_id: int, query: str) -> str:
     """Обработка запросов на создание учебного плана"""
@@ -674,6 +704,16 @@ async def _handle_quiz(user_id: int, query: str, topic: str = "весь") -> str
         logger.error(f"❌ Ошибка в _handle_quiz: {e}")
         return "❌ Произошла ошибка при создании quiz."
 
+def _extract_task_number(query: str) -> str:
+    # Ищет паттерны вида: "1", "1.2", "1а", "1.2б"
+    match = re.search(r'\b(\d+)\s*([а-яa-z])?(?:[\.](\d+))?\b', query.lower())
+    if match:
+        # Собираем номер в кучу (например "1" + "а" + ".2")
+        part1 = match.group(1)
+        letter = match.group(2) or ""
+        part2 = ("." + match.group(3)) if match.group(3) else ""
+        return f"{part1}{letter}{part2}"
+    return ""
 
 async def _get_context_from_notes(user_id: int, query: str) -> str:
     """Получает релевантный контекст из конспектов пользователя, БЕЗ использования памяти RAG."""
